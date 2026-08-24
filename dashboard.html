@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxy Care - لوحة الموبايل</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Cairo', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 pb-12">
+
+    <!-- شريط العنوان العلوي -->
+    <header class="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-md flex justify-between items-center">
+        <div>
+            <h1 class="text-lg font-black text-emerald-400">GALAXY CARE</h1>
+            <p class="text-xs text-slate-400">لوحة المتابعة السحابية المباشرة</p>
+        </div>
+        <button onclick="loadRepairs()" class="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700">
+            🔄 تحديث
+        </button>
+    </header>
+
+    <div class="p-4 max-w-lg mx-auto space-y-4">
+
+        <!-- شريط البحث السريع -->
+        <div class="relative">
+            <input type="text" id="searchInput" oninput="filterRepairs()" placeholder="🔍 بحث برقم الهاتف، العميل، الموديل..." 
+                   class="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm font-medium">
+        </div>
+
+        <!-- قائمة أذونات الصيانة -->
+        <div class="flex justify-between items-center pt-2">
+            <h2 class="font-bold text-slate-700 text-sm">📱 أذونات الصيانة الأخيرة</h2>
+            <span id="ordersCount" class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full">0 أجهزة</span>
+        </div>
+
+        <div id="repairsList" class="space-y-3">
+            <div class="text-center py-10 text-slate-400 text-sm">جاري تحميل البيانات من السيرفر السحابي...</div>
+        </div>
+
+    </div>
+
+    <!-- نافذة تفاصيل / تسليم جهاز -->
+    <div id="deliverModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl">
+            <h3 class="font-black text-slate-900 text-base" id="modalTitle">تسليم جهاز</h3>
+            <div class="space-y-2 text-xs">
+                <p><b>العميل:</b> <span id="mCustName" class="text-slate-600"></span></p>
+                <p><b>الجهاز:</b> <span id="mDevice" class="text-slate-600 font-bold"></span></p>
+                <p><b>العطل:</b> <span id="mProblem" class="text-slate-600"></span></p>
+            </div>
+            <div class="space-y-3 pt-2">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المحصل الفعلي (ج.م):</label>
+                    <input type="number" id="mCost" class="w-full border border-slate-300 rounded-lg p-2 text-sm font-bold text-emerald-700">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">تكلفة قطعة الغيار (ج.م):</label>
+                    <input type="number" id="mPartCost" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-rose-700 font-bold">
+                </div>
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button onclick="submitDeliver()" class="flex-1 bg-emerald-600 text-white py-2 rounded-xl text-xs font-bold hover:bg-emerald-700">تأكيد التسليم</button>
+                <button onclick="closeModal()" class="flex-1 bg-slate-200 text-slate-700 py-2 rounded-xl text-xs font-bold hover:bg-slate-300">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000/api";
+        let allRepairs = [];
+        let activeRepairId = null;
+
+        async function loadRepairs() {
+            try {
+                const res = await fetch(`${API_URL}/repairs`);
+                allRepairs = await res.json();
+                renderRepairs(allRepairs);
+            } catch (err) {
+                document.getElementById("repairsList").innerHTML = `
+                    <div class="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-xl text-xs text-center font-bold">
+                        فشل الاتصال بسيرفر API. تأكد أن السيرفر يعمل في الخلفية.
+                    </div>`;
+            }
+        }
+
+        function renderRepairs(list) {
+            const container = document.getElementById("repairsList");
+            document.getElementById("ordersCount").innerText = `${list.length} أجهزة`;
+
+            if (list.length === 0) {
+                container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs font-bold">لا توجد أذونات مسجلة حالياً.</div>`;
+                return;
+            }
+
+            container.innerHTML = list.map(r => {
+                const isDelivered = r.status === "تم التسليم";
+                const badgeClass = isDelivered ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-amber-100 text-amber-700 border-amber-200";
+                const custName = r.customers ? r.customers.name : "عميل";
+                const phone = r.customers ? r.customers.phone : "-";
+                const tech = r.employees ? r.employees.name : "غير محدد";
+
+                return `
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="text-[10px] font-black tracking-wider text-slate-400">#${r.id}</span>
+                            <h3 class="font-black text-slate-900 text-sm">${r.brand} ${r.model}</h3>
+                            <p class="text-xs text-slate-500 font-semibold">👤 ${custName} (${phone})</p>
+                        </div>
+                        <span class="border px-2.5 py-1 rounded-lg text-[10px] font-bold ${badgeClass}">
+                            ${r.status}
+                        </span>
+                    </div>
+
+                    <div class="bg-slate-50 p-2.5 rounded-xl text-xs space-y-1 text-slate-600">
+                        <p><b>العطل:</b> ${r.problem_desc}</p>
+                        <p><b>الفني:</b> ${tech}</p>
+                        ${r.inspection ? `<p class="text-[11px] text-slate-500">🔍 ${r.inspection}</p>` : ''}
+                    </div>
+
+                    <div class="flex justify-between items-center pt-1">
+                        <div>
+                            <span class="text-[10px] text-slate-400 block font-bold">التكلفة المطلوبة</span>
+                            <span class="text-sm font-black text-emerald-600">${r.cost.toLocaleString()} ج.م</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <a href="https://wa.me/20${phone}?text=مرحباً_${custName}_بخصوص_جهازك_${r.brand}_${r.model}" target="_blank" 
+                               class="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-xl text-xs font-bold flex items-center justify-center">
+                               💬 واتساب
+                            </a>
+                            ${!isDelivered ? `
+                            <button onclick="openDeliverModal(${r.id}, '${custName}', '${r.brand} ${r.model}', '${r.problem_desc}', ${r.cost}, ${r.part_cost})" 
+                                    class="bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-xl text-xs font-bold">
+                                ✅ تسليم
+                            </button>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function filterRepairs() {
+            const query = document.getElementById("searchInput").value.toLowerCase().trim();
+            if (!query) {
+                renderRepairs(allRepairs);
+                return;
+            }
+            const filtered = allRepairs.filter(r => {
+                const cName = r.customers ? r.customers.name.toLowerCase() : "";
+                const cPhone = r.customers ? r.customers.phone : "";
+                return r.brand.toLowerCase().includes(query) || 
+                       r.model.toLowerCase().includes(query) || 
+                       cName.includes(query) || 
+                       cPhone.includes(query);
+            });
+            renderRepairs(filtered);
+        }
+
+        function openDeliverModal(id, name, device, problem, cost, partCost) {
+            activeRepairId = id;
+            document.getElementById("modalTitle").innerText = `تسليم إذن رقم #${id}`;
+            document.getElementById("mCustName").innerText = name;
+            document.getElementById("mDevice").innerText = device;
+            document.getElementById("mProblem").innerText = problem;
+            document.getElementById("mCost").value = cost;
+            document.getElementById("mPartCost").value = partCost;
+            document.getElementById("deliverModal").classList.remove("hidden");
+        }
+
+        function closeModal() {
+            document.getElementById("deliverModal").classList.add("hidden");
+            activeRepairId = null;
+        }
+
+        async function submitDeliver() {
+            const cost = parseFloat(document.getElementById("mCost").value || 0);
+            const partCost = parseFloat(document.getElementById("mPartCost").value || 0);
+
+            try {
+                const res = await fetch(`${API_URL}/repairs/deliver`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        repair_id: activeRepairId,
+                        final_cost: cost,
+                        final_part_cost: partCost
+                    })
+                });
+
+                if (res.ok) {
+                    closeModal();
+                    loadRepairs();
+                } else {
+                    alert("حدث خطأ أثناء تأكيد التسليم.");
+                }
+            } catch (e) {
+                alert("تعذر الاتصال بالسيرفر.");
+            }
+        }
+
+        window.onload = loadRepairs;
+    </script>
+</body>
+</html>
