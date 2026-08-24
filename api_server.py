@@ -13,7 +13,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# 1. إنشاء التطبيق أولاً
+# 1. إنشاء التطبيق
 app = FastAPI(
     title="Galaxy Care Cloud API",
     description="سيرفر الربط السحابي لمركز Galaxy Care",
@@ -62,6 +62,31 @@ def home():
 @app.get("/mobile", response_class=FileResponse)
 def serve_mobile_dashboard():
     return "dashboard.html"
+
+# مسار إحصائيات الخزينة والأرباح اليومية
+@app.get("/api/stats/today")
+def get_today_stats():
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    
+    # جلب معاملات الخزينة لليوم
+    treasury_res = supabase.table("treasury").select("trans_type, amount").gte("created_at", f"{today_str}T00:00:00").execute()
+    
+    today_income = sum(t["amount"] for t in treasury_res.data if t.get("trans_type") == "وارد")
+    today_expense = sum(t["amount"] for t in treasury_res.data if t.get("trans_type") == "صادر")
+    
+    # جلب أذونات الصيانة التي تم تسليمها اليوم
+    repairs_res = supabase.table("repair_orders").select("cost, part_cost").eq("status", "تم التسليم").gte("delivered_at", f"{today_str}T00:00:00").execute()
+    
+    repair_revenue = sum(r.get("cost", 0) for r in repairs_res.data)
+    repair_parts = sum(r.get("part_cost", 0) for r in repairs_res.data)
+    repair_profit = repair_revenue - repair_parts
+
+    return {
+        "today_income": today_income,
+        "today_expense": today_expense,
+        "repair_profit": repair_profit,
+        "delivered_today_count": len(repairs_res.data)
+    }
 
 @app.post("/api/auth/login")
 def login(data: LoginRequest):

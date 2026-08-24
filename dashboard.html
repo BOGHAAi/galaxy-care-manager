@@ -16,19 +16,33 @@
     <header class="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-md flex justify-between items-center">
         <div>
             <h1 class="text-lg font-black text-emerald-400">GALAXY CARE</h1>
-            <p class="text-xs text-slate-400">لوحة المتابعة السحابية المباشرة</p>
+            <p class="text-[11px] text-slate-400 font-semibold">لوحة المتابعة السحابية المباشرة</p>
         </div>
-        <button onclick="loadRepairs()" class="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700">
+        <button onclick="loadData()" class="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-700 active:scale-95 transition">
             🔄 تحديث
         </button>
     </header>
 
     <div class="p-4 max-w-lg mx-auto space-y-4">
 
+        <!-- كروت الإحصائيات اليومية السريعة -->
+        <div class="grid grid-cols-2 gap-3">
+            <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200">
+                <span class="text-[11px] font-bold text-slate-400 block">وارد الخزينة اليوم</span>
+                <span id="statIncome" class="text-base font-black text-emerald-600 block mt-1">0 ج.م</span>
+                <span id="statDelivered" class="text-[10px] text-slate-400 font-semibold mt-0.5 block">0 أجهزة مسلمة</span>
+            </div>
+            <div class="bg-white p-3.5 rounded-2xl shadow-sm border border-slate-200">
+                <span class="text-[11px] font-bold text-slate-400 block">صافي أرباح الصيانة</span>
+                <span id="statProfit" class="text-base font-black text-blue-600 block mt-1">0 ج.م</span>
+                <span class="text-[10px] text-slate-400 font-semibold mt-0.5 block">بعد خصم التكلفة</span>
+            </div>
+        </div>
+
         <!-- شريط البحث السريع -->
         <div class="relative">
             <input type="text" id="searchInput" oninput="filterRepairs()" placeholder="🔍 بحث برقم الهاتف، العميل، الموديل..." 
-                   class="w-full bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm font-medium">
+                   class="w-full bg-white border border-slate-300 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm font-medium">
         </div>
 
         <!-- قائمة أذونات الصيانة -->
@@ -45,7 +59,7 @@
 
     <!-- نافذة تفاصيل / تسليم جهاز -->
     <div id="deliverModal" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-2xl p-5 max-w-sm w-full space-y-4 shadow-xl">
+        <div class="bg-white rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-xl">
             <h3 class="font-black text-slate-900 text-base" id="modalTitle">تسليم جهاز</h3>
             <div class="space-y-2 text-xs">
                 <p><b>العميل:</b> <span id="mCustName" class="text-slate-600"></span></p>
@@ -55,16 +69,16 @@
             <div class="space-y-3 pt-2">
                 <div>
                     <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المحصل الفعلي (ج.م):</label>
-                    <input type="number" id="mCost" class="w-full border border-slate-300 rounded-lg p-2 text-sm font-bold text-emerald-700">
+                    <input type="number" id="mCost" class="w-full border border-slate-300 rounded-xl p-2 text-sm font-bold text-emerald-700">
                 </div>
                 <div>
                     <label class="block text-xs font-bold text-slate-700 mb-1">تكلفة قطعة الغيار (ج.م):</label>
-                    <input type="number" id="mPartCost" class="w-full border border-slate-300 rounded-lg p-2 text-sm text-rose-700 font-bold">
+                    <input type="number" id="mPartCost" class="w-full border border-slate-300 rounded-xl p-2 text-sm text-rose-700 font-bold">
                 </div>
             </div>
             <div class="flex gap-2 pt-2">
-                <button onclick="submitDeliver()" class="flex-1 bg-emerald-600 text-white py-2 rounded-xl text-xs font-bold hover:bg-emerald-700">تأكيد التسليم</button>
-                <button onclick="closeModal()" class="flex-1 bg-slate-200 text-slate-700 py-2 rounded-xl text-xs font-bold hover:bg-slate-300">إلغاء</button>
+                <button onclick="submitDeliver()" class="flex-1 bg-emerald-600 text-white py-2.5 rounded-2xl text-xs font-bold hover:bg-emerald-700">تأكيد التسليم</button>
+                <button onclick="closeModal()" class="flex-1 bg-slate-200 text-slate-700 py-2.5 rounded-2xl text-xs font-bold hover:bg-slate-300">إلغاء</button>
             </div>
         </div>
     </div>
@@ -74,6 +88,25 @@
         let allRepairs = [];
         let activeRepairId = null;
 
+        async function loadData() {
+            loadStats();
+            loadRepairs();
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API_URL}/stats/today`);
+                if (res.ok) {
+                    const stats = await res.json();
+                    document.getElementById("statIncome").innerText = `${Number(stats.today_income || 0).toLocaleString()} ج.م`;
+                    document.getElementById("statProfit").innerText = `${Number(stats.repair_profit || 0).toLocaleString()} ج.م`;
+                    document.getElementById("statDelivered").innerText = `${stats.delivered_today_count || 0} أجهزة مسلمة`;
+                }
+            } catch (err) {
+                console.error("فشل جلب الإحصائيات:", err);
+            }
+        }
+
         async function loadRepairs() {
             try {
                 const res = await fetch(`${API_URL}/repairs`);
@@ -81,7 +114,7 @@
                 renderRepairs(allRepairs);
             } catch (err) {
                 document.getElementById("repairsList").innerHTML = `
-                    <div class="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-xl text-xs text-center font-bold">
+                    <div class="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-2xl text-xs text-center font-bold">
                         فشل الاتصال بالسيرفر السحابي. يرجى التحقق من اتصال الإنترنت.
                     </div>`;
             }
@@ -129,7 +162,7 @@
                         </div>
                         <div class="flex gap-2">
                             <a href="https://wa.me/20${phone}?text=مرحباً_${custName}_بخصوص_جهازك_${r.brand}_${r.model}" target="_blank" 
-                               class="bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-xl text-xs font-bold flex items-center justify-center">
+                               class="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-2 rounded-xl text-xs font-bold flex items-center justify-center">
                                💬 واتساب
                             </a>
                             ${!isDelivered ? `
@@ -193,7 +226,7 @@
 
                 if (res.ok) {
                     closeModal();
-                    loadRepairs();
+                    loadData();
                 } else {
                     alert("حدث خطأ أثناء تأكيد التسليم.");
                 }
@@ -202,7 +235,7 @@
             }
         }
 
-        window.onload = loadRepairs;
+        window.onload = loadData;
     </script>
 </body>
 </html>
