@@ -17,7 +17,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = FastAPI(
     title="Galaxy Care Multi-Tenant Cloud API",
     description="سيرفر الربط السحابي وإدارة محلات الصيانة المتعددة",
-    version="2.0.0"
+    version="2.1.0"
 )
 
 # 2. إعدادات CORS
@@ -115,7 +115,7 @@ def login(data: LoginRequest):
 def get_repairs(shop: dict = Depends(get_current_shop)):
     shop_id = shop["id"]
     res = supabase.table("repair_orders").select(
-        "id, brand, model, problem_desc, cost, part_cost, status, notes, inspection, warranty_days, received_at, customers(name, phone), employees(name)"
+        "id, brand, model, problem_desc, cost, part_cost, status, notes, inspection, warranty_days, received_at, customers(name, phone)"
     ).eq("shop_id", shop_id).order("id", desc=True).execute()
     return res.data
 
@@ -182,30 +182,46 @@ def deliver_repair(data: RepairDeliverRequest, shop: dict = Depends(get_current_
 
     return {"status": "success", "message": "تم تسليم الجهاز بنجاح"}
 
-# مسار تتبع العميل العام (يدعم البحث المباشر برقم الإذن أو رقم الهاتف)
+# مسار تتبع العميل المطور والمرن
 @app.get("/api/track")
 def track_repair(q: str, shop: Optional[str] = None):
-    query = supabase.table("repair_orders").select(
-        "id, brand, model, problem_desc, status, cost, inspection, warranty_days, shops(shop_name, phone)"
-    )
+    clean_q = q.strip()
     
-    if shop:
-        shop_res = supabase.table("shops").select("id").eq("shop_code", shop).execute()
-        if shop_res.data:
-            query = query.eq("shop_id", shop_res.data[0]["id"])
+    # 1. البحث برقم إذن الصيانة (إذا كان رقماً صغيراً 1-6 خانات)
+    if clean_q.isdigit() and len(clean_q) <= 6:
+        query = supabase.table("repair_orders").select(
+            "id, brand, model, problem_desc, status, cost, inspection, warranty_days"
+        ).eq("id", int(clean_q))
+        
+        if shop:
+            shop_res = supabase.table("shops").select("id").eq("shop_code", shop).execute()
+            if shop_res.data:
+                query = query.eq("shop_id", shop_res.data[0]["id"])
+                
+        res = query.execute()
+        if res.data:
+            return res.data[0]
 
-    # البحث برقم الإذن
-    if q.isdigit():
-        res = query.eq("id", int(q)).execute()
+    # 2. البحث برقم الهاتف مع معالجة الصفر وكود الدولة
+    phone_digits = "".join(filter(str.isdigit, clean_q))
+    # استخراج آخر 9 أو 10 أرقام لتجاوز اختلافات كتابة الأصفار
+    search_sub = phone_digits[-9:] if len(phone_digits) >= 9 else phone_digits
+
+    cust_res = supabase.table("customers").select("id").ilike("phone", f"%{search_sub}%").execute()
+    
+    if cust_res.data:
+        cust_ids = [c["id"] for c in cust_res.data]
+        order_query = supabase.table("repair_orders").select(
+            "id, brand, model, problem_desc, status, cost, inspection, warranty_days"
+        ).in_("customer_id", cust_ids).order("id", desc=True).limit(1)
+        
+        if shop:
+            shop_res = supabase.table("shops").select("id").eq("shop_code", shop).execute()
+            if shop_res.data:
+                order_query = order_query.eq("shop_id", shop_res.data[0]["id"])
+                
+        res = order_query.execute()
         if res.data:
             return res.data[0]
-            
-    # البحث برقم هاتف العميل
-    cust = supabase.table("customers").select("id").eq("phone", q).execute()
-    if cust.data:
-        cust_id = cust.data[0]["id"]
-        res = query.eq("customer_id", cust_id).order("id", desc=True).limit(1).execute()
-        if res.data:
-            return res.data[0]
-            
+
     raise HTTPException(status_code=404, detail="لم يتم العثور على أجهزة مطابقة")
