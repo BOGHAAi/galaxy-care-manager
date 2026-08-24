@@ -70,7 +70,7 @@
     </div>
 
     <script>
-        const API_URL = "http://127.0.0.1:8000/api";
+        const API_URL = "https://galaxycare-api.onrender.com/api";
         let allRepairs = [];
         let activeRepairId = null;
 
@@ -82,7 +82,7 @@
             } catch (err) {
                 document.getElementById("repairsList").innerHTML = `
                     <div class="bg-rose-50 border border-rose-200 text-rose-700 p-4 rounded-xl text-xs text-center font-bold">
-                        فشل الاتصال بسيرفر API. تأكد أن السيرفر يعمل في الخلفية.
+                        فشل الاتصال بالسيرفر السحابي. يرجى التحقق من اتصال الإنترنت.
                     </div>`;
             }
         }
@@ -91,7 +91,7 @@
             const container = document.getElementById("repairsList");
             document.getElementById("ordersCount").innerText = `${list.length} أجهزة`;
 
-            if (list.length === 0) {
+            if (!list || list.length === 0) {
                 container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs font-bold">لا توجد أذونات مسجلة حالياً.</div>`;
                 return;
             }
@@ -125,7 +125,7 @@
                     <div class="flex justify-between items-center pt-1">
                         <div>
                             <span class="text-[10px] text-slate-400 block font-bold">التكلفة المطلوبة</span>
-                            <span class="text-sm font-black text-emerald-600">${r.cost.toLocaleString()} ج.م</span>
+                            <span class="text-sm font-black text-emerald-600">${Number(r.cost || 0).toLocaleString()} ج.م</span>
                         </div>
                         <div class="flex gap-2">
                             <a href="https://wa.me/20${phone}?text=مرحباً_${custName}_بخصوص_جهازك_${r.brand}_${r.model}" target="_blank" 
@@ -152,8 +152,8 @@
             const filtered = allRepairs.filter(r => {
                 const cName = r.customers ? r.customers.name.toLowerCase() : "";
                 const cPhone = r.customers ? r.customers.phone : "";
-                return r.brand.toLowerCase().includes(query) || 
-                       r.model.toLowerCase().includes(query) || 
+                return (r.brand && r.brand.toLowerCase().includes(query)) || 
+                       (r.model && r.model.toLowerCase().includes(query)) || 
                        cName.includes(query) || 
                        cPhone.includes(query);
             });
