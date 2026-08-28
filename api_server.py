@@ -1,6 +1,7 @@
 import os
 import json
 import urllib.request
+import urllib.error
 from typing import Optional
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Header, Depends
@@ -113,22 +114,38 @@ async def handle_ai_query(req_data: AIQueryRequest):
     if not user_prompt:
         return {"success": False, "error": "السؤال فارغ"}
 
-    if not GEMINI_API_KEY:
+    api_key = GEMINI_API_KEY.strip()
+    if not api_key:
         return {"success": False, "error": "مفتاح Gemini API غير مضاف في متغيرات بيئة السيرفر (Environment Variables)"}
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        
+        full_text_prompt = f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"
         payload = {
-            "contents": [{"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"}]}],
-            "generationConfig": {"response_mime_type": "application/json"}
+            "contents": [
+                {
+                    "parts": [
+                        {"text": full_text_prompt}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "response_mime_type": "application/json"
+            }
         }
         
+        req_data_bytes = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
             url, 
-            data=json.dumps(payload).encode('utf-8'), 
-            headers={'Content-Type': 'application/json'}
+            data=req_data_bytes, 
+            headers={
+                'Content-Type': 'application/json'
+            },
+            method='POST'
         )
-        with urllib.request.urlopen(req, timeout=15) as response:
+        
+        with urllib.request.urlopen(req, timeout=20) as response:
             res_data = json.loads(response.read().decode('utf-8'))
 
         raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
@@ -139,6 +156,9 @@ async def handle_ai_query(req_data: AIQueryRequest):
             "sql": parsed.get("sql"),
             "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
         }
+    except urllib.error.HTTPError as he:
+        err_body = he.read().decode('utf-8', errors='ignore')
+        return {"success": False, "error": f"HTTP Error {he.code}: {err_body}"}
     except Exception as e:
         return {"success": False, "error": f"تعذر استجابة الذكاء الاصطناعي: {str(e)}"}
 
