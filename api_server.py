@@ -16,10 +16,9 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# مفتاح الذكاء الاصطناعي من متغيرات البيئة في Render
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# مفتاح OpenAI من متغيرات البيئة في Render
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# تعليمات وهيكل قاعدة البيانات للذكاء الاصطناعي
 SYSTEM_PROMPT = """
 You are an intelligent database assistant for 'Galaxy Care Manager' (a mobile phone repair & POS desktop system).
 Your task is to convert the user's natural language question into a single, safe, read-only SQL query for SQLite, OR answer general advice directly.
@@ -44,7 +43,7 @@ CRITICAL RULES:
 app = FastAPI(
     title="Galaxy Care Multi-Tenant Cloud API",
     description="سيرفر الربط السحابي وإدارة محلات الصيانة المتعددة مع مساعد BOGHA AI",
-    version="2.2.0"
+    version="2.3.0"
 )
 
 # 2. إعدادات CORS
@@ -95,7 +94,7 @@ class AIQueryRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "online", "mode": "multi-tenant", "ai_status": "ready", "message": "Galaxy Care Cloud API is running"}
+    return {"status": "online", "mode": "multi-tenant", "ai_engine": "OpenAI", "message": "Galaxy Care Cloud API is running"}
 
 # فتح لوحة الموبايل مباشرة من المتصفح
 @app.get("/mobile", response_class=FileResponse)
@@ -107,40 +106,35 @@ def serve_mobile_dashboard():
 def serve_track_page():
     return "track.html"
 
-# مسار مساعد الذكاء الاصطناعي المركزي
+# مسار مساعد الذكاء الاصطناعي المركزي عبر OpenAI
 @app.post("/api/ai_query")
 async def handle_ai_query(req_data: AIQueryRequest):
     user_prompt = req_data.prompt.strip()
     if not user_prompt:
         return {"success": False, "error": "السؤال فارغ"}
 
-    api_key = GEMINI_API_KEY.strip()
+    api_key = OPENAI_API_KEY.strip()
     if not api_key:
-        return {"success": False, "error": "مفتاح Gemini API غير مضاف في متغيرات بيئة السيرفر (Environment Variables)"}
+        return {"success": False, "error": "مفتاح OpenAI API غير مضاف في متغيرات السيرفر"}
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        
-        full_text_prompt = f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"
+        url = "https://api.openai.com/v1/chat/completions"
         payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": full_text_prompt}
-                    ]
-                }
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
             ],
-            "generationConfig": {
-                "response_mime_type": "application/json"
-            }
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1
         }
         
-        req_data_bytes = json.dumps(payload).encode('utf-8')
         req = urllib.request.Request(
             url, 
-            data=req_data_bytes, 
+            data=json.dumps(payload).encode('utf-8'), 
             headers={
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}'
             },
             method='POST'
         )
@@ -148,7 +142,7 @@ async def handle_ai_query(req_data: AIQueryRequest):
         with urllib.request.urlopen(req, timeout=20) as response:
             res_data = json.loads(response.read().decode('utf-8'))
 
-        raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+        raw_text = res_data['choices'][0]['message']['content']
         parsed = json.loads(raw_text)
 
         return {
@@ -158,7 +152,7 @@ async def handle_ai_query(req_data: AIQueryRequest):
         }
     except urllib.error.HTTPError as he:
         err_body = he.read().decode('utf-8', errors='ignore')
-        return {"success": False, "error": f"HTTP Error {he.code}: {err_body}"}
+        return {"success": False, "error": f"خطأ OpenAI ({he.code}): {err_body}"}
     except Exception as e:
         return {"success": False, "error": f"تعذر استجابة الذكاء الاصطناعي: {str(e)}"}
 
