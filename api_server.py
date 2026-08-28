@@ -20,80 +20,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
-@app.post("/api/ai_query")
-async def handle_ai_query(req_data: AIQueryRequest):
-    user_prompt = req_data.prompt.strip()
-    if not user_prompt:
-        return {"success": False, "error": "السؤال فارغ"}
-
-    # 1. المحاولة الأولى: عبر Google Gemini (الأسرع والأوفر)
-    if GEMINI_API_KEY:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-            full_text_prompt = f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"
-            payload = {
-                "contents": [{"parts": [{"text": full_text_prompt}]}],
-                "generationConfig": {"response_mime_type": "application/json"}
-            }
-            req = urllib.request.Request(
-                url, 
-                data=json.dumps(payload).encode('utf-8'), 
-                headers={'Content-Type': 'application/json'},
-                method='POST'
-            )
-            with urllib.request.urlopen(req, timeout=15) as response:
-                res_data = json.loads(response.read().decode('utf-8'))
-
-            raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
-            parsed = json.loads(raw_text)
-            return {
-                "success": True,
-                "engine": "Gemini",
-                "sql": parsed.get("sql"),
-                "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
-            }
-        except Exception:
-            # في حال تعثر Google، الانتقال المباشر للمزود الاحتياطي
-            pass
-
-    # 2. المحاولة الاحتياطية (Fallback): عبر OpenAI GPT-4o-mini
-    if OPENAI_API_KEY:
-        try:
-            url = "https://api.openai.com/v1/chat/completions"
-            payload = {
-                "model": "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.1
-            }
-            req = urllib.request.Request(
-                url, 
-                data=json.dumps(payload).encode('utf-8'), 
-                headers={
-                    'Content-Type': 'application/json',
-                    'Authorization': f'Bearer {OPENAI_API_KEY}'
-                },
-                method='POST'
-            )
-            with urllib.request.urlopen(req, timeout=15) as response:
-                res_data = json.loads(response.read().decode('utf-8'))
-
-            raw_text = res_data['choices'][0]['message']['content']
-            parsed = json.loads(raw_text)
-            return {
-                "success": True,
-                "engine": "OpenAI",
-                "sql": parsed.get("sql"),
-                "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
-            }
-        except Exception as e:
-            return {"success": False, "error": f"تعذر الاتصال بـ OpenAI: {str(e)}"}
-
-    return {"success": False, "error": "لا يوجد أي مفتاح API مفعل (Gemini أو OpenAI) في متغيرات السيرفر"}
-
+# تعليمات وهيكل قاعدة البيانات للذكاء الاصطناعي
 SYSTEM_PROMPT = """
 You are an intelligent database assistant for 'Galaxy Care Manager' (a mobile phone repair & POS desktop system).
 Your task is to convert the user's natural language question into a single, safe, read-only SQL query for SQLite, OR answer general advice directly.
@@ -118,7 +45,7 @@ CRITICAL RULES:
 app = FastAPI(
     title="Galaxy Care Multi-Tenant Cloud API",
     description="سيرفر الربط السحابي وإدارة محلات الصيانة المتعددة مع مساعد BOGHA AI",
-    version="2.3.0"
+    version="2.4.0"
 )
 
 # 2. إعدادات CORS
@@ -169,7 +96,13 @@ class AIQueryRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "online", "mode": "multi-tenant", "ai_engine": "OpenAI", "message": "Galaxy Care Cloud API is running"}
+    return {
+        "status": "online",
+        "mode": "multi-tenant",
+        "gemini_ready": bool(GEMINI_API_KEY),
+        "openai_ready": bool(OPENAI_API_KEY),
+        "message": "Galaxy Care Cloud API is running"
+    }
 
 # فتح لوحة الموبايل مباشرة من المتصفح
 @app.get("/mobile", response_class=FileResponse)
@@ -181,55 +114,80 @@ def serve_mobile_dashboard():
 def serve_track_page():
     return "track.html"
 
-# مسار مساعد الذكاء الاصطناعي المركزي عبر OpenAI
+# مسار مساعد الذكاء الاصطناعي المركزي بنظام التبديل التلقائي
 @app.post("/api/ai_query")
 async def handle_ai_query(req_data: AIQueryRequest):
     user_prompt = req_data.prompt.strip()
     if not user_prompt:
         return {"success": False, "error": "السؤال فارغ"}
 
-    api_key = OPENAI_API_KEY.strip()
-    if not api_key:
-        return {"success": False, "error": "مفتاح OpenAI API غير مضاف في متغيرات السيرفر"}
+    # 1. المحاولة الأولى: عبر Google Gemini
+    if GEMINI_API_KEY:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            full_text_prompt = f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"
+            payload = {
+                "contents": [{"parts": [{"text": full_text_prompt}]}],
+                "generationConfig": {"response_mime_type": "application/json"}
+            }
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(payload).encode('utf-8'), 
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
 
-    try:
-        url = "https://api.openai.com/v1/chat/completions"
-        payload = {
-            "model": "gpt-4o-mini",
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt}
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.1
-        }
-        
-        req = urllib.request.Request(
-            url, 
-            data=json.dumps(payload).encode('utf-8'), 
-            headers={
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
-            },
-            method='POST'
-        )
-        
-        with urllib.request.urlopen(req, timeout=20) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
+            raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+            parsed = json.loads(raw_text)
+            return {
+                "success": True,
+                "engine": "Gemini",
+                "sql": parsed.get("sql"),
+                "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
+            }
+        except Exception:
+            # إذا حدث أي تعثر في اتصال Google يتم الانتقال تلقائياً لـ OpenAI
+            pass
 
-        raw_text = res_data['choices'][0]['message']['content']
-        parsed = json.loads(raw_text)
+    # 2. المحاولة الاحتياطية (Fallback): عبر OpenAI GPT-4o-mini
+    if OPENAI_API_KEY:
+        try:
+            url = "https://api.openai.com/v1/chat/completions"
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1
+            }
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(payload).encode('utf-8'), 
+                headers={
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {OPENAI_API_KEY}'
+                },
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=15) as response:
+                res_data = json.loads(response.read().decode('utf-8'))
 
-        return {
-            "success": True,
-            "sql": parsed.get("sql"),
-            "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
-        }
-    except urllib.error.HTTPError as he:
-        err_body = he.read().decode('utf-8', errors='ignore')
-        return {"success": False, "error": f"خطأ OpenAI ({he.code}): {err_body}"}
-    except Exception as e:
-        return {"success": False, "error": f"تعذر استجابة الذكاء الاصطناعي: {str(e)}"}
+            raw_text = res_data['choices'][0]['message']['content']
+            parsed = json.loads(raw_text)
+            return {
+                "success": True,
+                "engine": "OpenAI",
+                "sql": parsed.get("sql"),
+                "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
+            }
+        except Exception as e:
+            return {"success": False, "error": f"تعذر الاتصال بالمزودين (Gemini / OpenAI): {str(e)}"}
+
+    return {"success": False, "error": "لا يوجد أي مفتاح API مفعل (Gemini أو OpenAI) في متغيرات السيرفر"}
 
 # مسار إحصائيات الخزينة والأرباح اليومية للمحل الحالي
 @app.get("/api/stats/today")
