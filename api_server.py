@@ -117,7 +117,7 @@ async def handle_ai_query(req_data: AIQueryRequest):
         return {"success": False, "error": "مفتاح Gemini API غير مضاف في متغيرات بيئة السيرفر (Environment Variables)"}
 
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"}]}],
             "generationConfig": {"response_mime_type": "application/json"}
