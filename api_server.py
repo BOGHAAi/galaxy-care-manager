@@ -1,4 +1,6 @@
 import os
+import json
+import urllib.request
 from typing import Optional
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Header, Depends
@@ -13,11 +15,35 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# مفتاح الذكاء الاصطناعي من متغيرات البيئة في Render
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+
+# تعليمات وهيكل قاعدة البيانات للذكاء الاصطناعي
+SYSTEM_PROMPT = """
+You are an intelligent database assistant for 'Galaxy Care Manager' (a mobile phone repair & POS desktop system).
+Your task is to convert the user's natural language question into a single, safe, read-only SQL query for SQLite, OR answer general advice directly.
+
+Database Schema:
+1. employees (id, name, phone, role, salary_type, commission_rate, fixed_salary, created_at)
+2. customers (id, name, phone, created_at)
+3. repair_orders (id, customer_id, technician_id, brand, model, problem_desc, cost, part_cost, status, notes, inspection, warranty_days, received_at, delivered_at)
+4. inventory (id, item_name, category, cost_price, sell_price, quantity, created_at)
+5. treasury (id, trans_type, category, amount, description, repair_id, employee_id, created_at)
+6. accounts (id, name, account_type, phone, credit_limit, opening_balance)
+7. attendance (id, employee_id, att_date, check_in, check_out, total_hours, status)
+
+CRITICAL RULES:
+- ONLY generate SELECT queries. NEVER generate INSERT, UPDATE, DELETE, DROP, ALTER, or PRAGMA.
+- Always output strict JSON with two keys:
+  "sql": "SELECT ... " (or null if general advice)
+  "explanation": "Short Arabic sentence explaining what you calculated or summarized."
+"""
+
 # 1. إنشاء التطبيق
 app = FastAPI(
     title="Galaxy Care Multi-Tenant Cloud API",
-    description="سيرفر الربط السحابي وإدارة محلات الصيانة المتعددة",
-    version="2.1.0"
+    description="سيرفر الربط السحابي وإدارة محلات الصيانة المتعددة مع مساعد BOGHA AI",
+    version="2.2.0"
 )
 
 # 2. إعدادات CORS
@@ -60,11 +86,15 @@ class RepairDeliverRequest(BaseModel):
     final_cost: float
     final_part_cost: float
 
+class AIQueryRequest(BaseModel):
+    machine_id: str
+    prompt: str
+
 # ==================== المسارات والروابط ====================
 
 @app.get("/")
 def home():
-    return {"status": "online", "mode": "multi-tenant", "message": "Galaxy Care Multi-Tenant Cloud API is running"}
+    return {"status": "online", "mode": "multi-tenant", "ai_status": "ready", "message": "Galaxy Care Cloud API is running"}
 
 # فتح لوحة الموبايل مباشرة من المتصفح
 @app.get("/mobile", response_class=FileResponse)
@@ -76,19 +106,53 @@ def serve_mobile_dashboard():
 def serve_track_page():
     return "track.html"
 
+# مسار مساعد الذكاء الاصطناعي المركزي
+@app.post("/api/ai_query")
+async def handle_ai_query(req_data: AIQueryRequest):
+    user_prompt = req_data.prompt.strip()
+    if not user_prompt:
+        return {"success": False, "error": "السؤال فارغ"}
+
+    if not GEMINI_API_KEY:
+        return {"success": False, "error": "مفتاح Gemini API غير مضاف في متغيرات بيئة السيرفر (Environment Variables)"}
+
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nسؤال المستخدم: {user_prompt}"}]}],
+            "generationConfig": {"response_mime_type": "application/json"}
+        }
+        
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(payload).encode('utf-8'), 
+            headers={'Content-Type': 'application/json'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+
+        raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
+        parsed = json.loads(raw_text)
+
+        return {
+            "success": True,
+            "sql": parsed.get("sql"),
+            "explanation": parsed.get("explanation", "إليك النتيجة المطلوبة:")
+        }
+    except Exception as e:
+        return {"success": False, "error": f"تعذر استجابة الذكاء الاصطناعي: {str(e)}"}
+
 # مسار إحصائيات الخزينة والأرباح اليومية للمحل الحالي
 @app.get("/api/stats/today")
 def get_today_stats(shop: dict = Depends(get_current_shop)):
     shop_id = shop["id"]
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
     
-    # جلب معاملات الخزينة لليوم الخاصة بالمحل فقط
     treasury_res = supabase.table("treasury").select("trans_type, amount").eq("shop_id", shop_id).gte("created_at", f"{today_str}T00:00:00").execute()
     
     today_income = sum(t["amount"] for t in treasury_res.data if t.get("trans_type") == "وارد")
     today_expense = sum(t["amount"] for t in treasury_res.data if t.get("trans_type") == "صادر")
     
-    # جلب أذونات الصيانة التي تم تسليمها اليوم للمحل فقط
     repairs_res = supabase.table("repair_orders").select("cost, part_cost").eq("shop_id", shop_id).eq("status", "تم التسليم").gte("delivered_at", f"{today_str}T00:00:00").execute()
     
     repair_revenue = sum(r.get("cost", 0) for r in repairs_res.data)
@@ -187,7 +251,6 @@ def deliver_repair(data: RepairDeliverRequest, shop: dict = Depends(get_current_
 def track_repair(q: str, shop: Optional[str] = None):
     clean_q = q.strip()
     
-    # 1. البحث برقم إذن الصيانة (إذا كان رقماً صغيراً 1-6 خانات)
     if clean_q.isdigit() and len(clean_q) <= 6:
         query = supabase.table("repair_orders").select(
             "id, brand, model, problem_desc, status, cost, inspection, warranty_days"
@@ -202,9 +265,7 @@ def track_repair(q: str, shop: Optional[str] = None):
         if res.data:
             return res.data[0]
 
-    # 2. البحث برقم الهاتف مع معالجة الصفر وكود الدولة
     phone_digits = "".join(filter(str.isdigit, clean_q))
-    # استخراج آخر 9 أو 10 أرقام لتجاوز اختلافات كتابة الأصفار
     search_sub = phone_digits[-9:] if len(phone_digits) >= 9 else phone_digits
 
     cust_res = supabase.table("customers").select("id").ilike("phone", f"%{search_sub}%").execute()
